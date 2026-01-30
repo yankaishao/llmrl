@@ -1,0 +1,44 @@
+experiment:
+  name: "baseline"
+  parser_mode: "mock"
+  arbiter_mode: "rule"
+  policy_path: "hri_safety_ws/policies/ppo_policy.zip"
+  episodes: 50
+  seeds: [11, 22, 33]
+  amb_high: 0.4
+  risk_high: 0.7
+
+matrix:
+  parser_modes: ["mock", "qwen"]
+  arbiter_modes: ["rule", "rl"]
+
+qwen:
+  model: "qwen3-max"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key_env: "QWEN_API_KEY"
+  timeout_sec: 10
+  max_retries: 1
+  temperature: 0.1
+  max_tokens: 256
+  validate_schema: true
+  track_fallback_rate: true
+
+scene_summary:
+  top_k: 8
+  max_len: 1200
+
+reset_randomization:
+  swap_similar: true
+  similar_ratio: 0.5
+  object_count_target: 8
+  risk_object_prob: 0.3
+  risk_offset_range: 0.2
+  generic_offset_range: 0.05
+  distractor_enabled: false
+  distractor_position: "0.0,0.5,0.8"
+
+evaluation:
+  launch_file: "pipeline_gazebo.launch.py"
+  timeout_sec: 2.0
+  reset_timeout: 2.0
+  results_dir: "results"
