@@ -1,0 +1,12 @@
+# Training artifacts
+training/.venv/
+
+# Policies and outputs
+hri_safety_ws/policies/
+results/
+report/
+
+# Generic artifacts
+**/*.zip
+**/*.csv
+**/*.png

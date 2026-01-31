@@ -11,6 +11,7 @@ ACTION_MAP = {
     2: "CLARIFY_CHOICE",
     3: "ASK_POINT",
     4: "REFUSE_SAFE",
+    5: "FALLBACK_HUMAN_HELP",
 }
 
 QUERY_ACTIONS = {"CONFIRM_YN", "CLARIFY_CHOICE", "ASK_POINT"}
@@ -102,6 +103,8 @@ def utterance_for_action(action: str, selected_id: str, conflict_reason: str, to
     if action == "REFUSE_SAFE":
         reason = conflict_reason or "unspecified"
         return f"I cannot do that because it may be unsafe or not feasible. Reason: {reason}"
+    if action == "FALLBACK_HUMAN_HELP":
+        return "I'm not fully sure. For safety, please confirm or take over this step."
     return ""
 
 

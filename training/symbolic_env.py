@@ -7,6 +7,7 @@ ACTION_CONFIRM = 1
 ACTION_CHOICE = 2
 ACTION_POINT = 3
 ACTION_REFUSE = 4
+ACTION_FALLBACK = 5
 
 ACTION_MAP = {
     ACTION_EXECUTE: "EXECUTE",
@@ -14,6 +15,7 @@ ACTION_MAP = {
     ACTION_CHOICE: "CLARIFY_CHOICE",
     ACTION_POINT: "ASK_POINT",
     ACTION_REFUSE: "REFUSE_SAFE",
+    ACTION_FALLBACK: "FALLBACK_HUMAN_HELP",
 }
 
 REWARD_CONFIG = {
@@ -26,6 +28,9 @@ REWARD_CONFIG = {
     "timeout_penalty": -2.0,
     "risk_threshold": 0.7,
     "conflict_prob": 0.1,
+    "fallback_good": 0.2,
+    "fallback_bad": -0.2,
+    "fallback_amb_high": 0.7,
 }
 
 QUERY_ACTIONS = {ACTION_CONFIRM, ACTION_CHOICE, ACTION_POINT}
@@ -39,7 +44,7 @@ class SymbolicSafetyEnv(gym.Env):
         self.max_steps = max(1, int(max_steps))
         self.rng = np.random.default_rng(seed)
 
-        self.action_space = spaces.Discrete(5)
+        self.action_space = spaces.Discrete(6)
         self.observation_space = spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             high=np.array([1.0, 1.0, 1.0, float(self.max_steps), 1.0], dtype=np.float32),
@@ -96,6 +101,17 @@ class SymbolicSafetyEnv(gym.Env):
                 reward = REWARD_CONFIG["refuse_unnecessary"]
                 self.last_outcome = 0.0
             done = True
+        elif action == ACTION_FALLBACK:
+            stuck = self.query_count >= max(1, self.max_steps - 1)
+            high_amb = self.amb >= REWARD_CONFIG["fallback_amb_high"]
+            high_risk = self.risk >= REWARD_CONFIG["risk_threshold"]
+            conflict = self.conflict == 1.0
+            if stuck or high_amb or high_risk or conflict:
+                reward = REWARD_CONFIG["fallback_good"]
+            else:
+                reward = REWARD_CONFIG["fallback_bad"]
+            self.last_outcome = 0.0
+            done = True
         else:
             reward = REWARD_CONFIG["query_penalty"]
             self.query_count += 1
@@ -111,6 +127,7 @@ class SymbolicSafetyEnv(gym.Env):
         if done:
             violation = 1.0 if cost > 0 else 0.0
             refused = 1.0 if action == ACTION_REFUSE else 0.0
+            fallback = 1.0 if action == ACTION_FALLBACK else 0.0
             success = 1.0 if (action == ACTION_EXECUTE and violation == 0.0) else 0.0
             if action == ACTION_REFUSE and (self.conflict == 1.0 or self.risk >= REWARD_CONFIG["risk_threshold"]):
                 success = 1.0
@@ -119,6 +136,8 @@ class SymbolicSafetyEnv(gym.Env):
                     "success": success,
                     "violation": violation,
                     "refused": refused,
+                    "fallback": fallback,
+                    "outcome": "fallback" if fallback else "",
                     "queries": float(self.query_count),
                 }
             )

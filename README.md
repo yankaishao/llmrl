@@ -17,6 +17,7 @@ Notes:
 - Export `QWEN_API_KEY=...` to enable the Qwen parser (it falls back to mock if unset).
 - The default instruction set is `instructions/base.txt`.
 - If you see `rclpy` import errors under conda, run `conda deactivate` or use `/usr/bin/python3`.
+You can also put `QWEN_API_KEY=...` into a repo-root `.env` file; runner scripts will load it automatically.
 Parser-only (baseline) matrix:
 ```
 python3 evaluation/ros_eval_runner.py --matrix-parser-only --episodes 12 --results-dir results
@@ -64,6 +65,14 @@ Nodes and topics
 - `parser_router` publishes `/nl/parse_result` and routes mock vs qwen
 - `estimator_node` publishes `/safety/features` (std_msgs/String JSON)
 - `rule_based_arbiter` publishes `/arbiter/action` and `/robot/utterance`
+
+RL action set (6 actions)
+- EXECUTE
+- CONFIRM_YN
+- CLARIFY_CHOICE
+- ASK_POINT
+- REFUSE_SAFE
+- FALLBACK_HUMAN_HELP (safe downgrade / ask human to confirm or take over)
 
 Build
 ```
@@ -314,8 +323,12 @@ Outputs:
 - `results/<timestamp>_<parser>_<arbiter>.csv`
 - `results/summary.csv`
 - `results/eval_meta.json`
-Per-episode CSV fields include `task_success`, `safe_refusal`, and `failure_reason`.
-Summary adds `task_success_rate` and `safe_refusal_rate`.
+Per-episode CSV fields include `task_success`, `safe_refusal`, `fallback`, `failure_reason`, and `fallback_reason`.
+Summary adds `task_success_rate`, `safe_refusal_rate`, and `fallback_rate`.
+Multi-seed outputs (under results/full_matrix):
+- `seed_<k>/<cell_name>/{summary.csv,*.csv}`
+- `seed_<k>/run_meta.json`
+- `index.json`
 
 Parser-only (mock+rule, qwen+rule):
 ```
@@ -333,6 +346,9 @@ Simulated user + limits (key flags):
 - `--clarify-left/--clarify-right/--clarify-default` set disambiguation replies.
 - `--point-response` sets the reply for `ASK_POINT`.
 - `--regression-test` runs 5 episodes and fails if clear instructions exceed 2 queries.
+Fallback behavior:
+- When repeated clarifications still fail or the policy is unsure, RL may output `FALLBACK_HUMAN_HELP`.
+- The episode ends with a safe handoff utterance (no robot action).
 
 One-command Gazebo matrix (wrapper):
 ```
@@ -356,6 +372,18 @@ Full 2x2 matrix (Gazebo headless):
   --policy-path hri_safety_ws/policies/ppo_policy.zip
 ```
 
+Full 2x2 matrix (multi-seed, non-Gazebo, recommended):
+```
+./evaluation/run_matrix_full.sh --episodes 12 --results-dir results/full_matrix --seeds 0,1,2
+python3 evaluation/make_report.py --results-dir results/full_matrix
+```
+Use existing policy for all seeds:
+```
+./evaluation/run_matrix_full.sh --episodes 12 --results-dir results/full_matrix --seeds 0,1,2 \\
+  --policy-path hri_safety_ws/policies/ppo_policy.zip
+python3 evaluation/make_report.py --results-dir results/full_matrix
+```
+
 Report generation (tables + plots):
 ```
 python3 evaluation/make_report.py --results-dir results
@@ -363,7 +391,10 @@ python3 evaluation/make_report.py --results-dir results
 Outputs:
 - `report/summary.md`
 - `report/metrics.csv`
+- `report/metrics_aggregate.csv` (multi-seed)
 - `report/*.png`
+- `report/reasons.csv`
+- `report/reasons.md`
 
 Pipeline launch (router):
 ```

@@ -21,7 +21,7 @@ from hri_safety_core.arbiter_utils import (
 )
 
 
-ACTION_COUNT = 5
+ACTION_COUNT = 6
 
 
 class RandomPolicy:
@@ -154,6 +154,8 @@ class RlArbiterNode(Node):
             self.last_outcome = 1.0 if conflict == 0 and float(obs[1]) < 0.7 else 0.0
         elif action == "REFUSE_SAFE":
             self.last_outcome = 1.0 if conflict == 1 or float(obs[1]) >= 0.7 else 0.0
+        elif action == "FALLBACK_HUMAN_HELP":
+            self.last_outcome = 0.0
         else:
             self.last_outcome = 0.0
 
