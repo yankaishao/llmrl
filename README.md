@@ -1,11 +1,39 @@
 # Mock Safety Pipeline (Step 1 + Step 2)
 
 This folder contains the minimal ROS2 pipeline used by the mock LLM parser
-and a scene summary stub. Everything lives under `mypaper/hri_safety_ws`.
+and a scene summary stub. Everything lives under `hri_safety_ws`.
 
 Workspace
-- Path: `mypaper/hri_safety_ws`
+- Path: `hri_safety_ws`
 - Package: `hri_safety_core` (ament_python)
+
+Quickstart: one command matrix eval
+```
+cd /path/to/llmrl
+./evaluation/run_matrix_gazebo.sh --episodes 12 --results-dir results
+python3 evaluation/make_report.py --results-dir results
+```
+Notes:
+- Export `QWEN_API_KEY=...` to enable the Qwen parser (it falls back to mock if unset).
+- The default instruction set is `instructions/base.txt`.
+- If you see `rclpy` import errors under conda, run `conda deactivate` or use `/usr/bin/python3`.
+Parser-only (baseline) matrix:
+```
+python3 evaluation/ros_eval_runner.py --matrix-parser-only --episodes 12 --results-dir results
+```
+Reasonable-query eval (simulated user + limits, no timeouts):
+```
+python3 evaluation/ros_eval_runner.py --matrix-parser-only --episodes 5 --results-dir results \\
+  --max-turns-per-episode 10 --max-repeat-action 3
+```
+Smoke test (build + node discovery + CLI help):
+```
+bash scripts/smoke_test.sh
+```
+RL integration sanity check (quick PPO + ROS eval):
+```
+bash evaluation/sanity_check_rl.sh
+```
 
 Tested environment (2026-01-29 20:03:46 CST)
 - OS: Ubuntu 22.04.5 LTS (jammy)
@@ -41,7 +69,7 @@ Build
 ```
 conda deactivate
 source /opt/ros/humble/setup.bash
-cd ~/AttentiveSupport/mypaper/hri_safety_ws
+cd /path/to/llmrl/hri_safety_ws
 colcon build
 ```
 
@@ -49,7 +77,7 @@ Run (each terminal)
 ```
 conda deactivate
 source /opt/ros/humble/setup.bash
-cd ~/AttentiveSupport/mypaper/hri_safety_ws
+cd /path/to/llmrl/hri_safety_ws
 source install/local_setup.bash
 export AMENT_PREFIX_PATH=$PWD/install/hri_safety_core:$AMENT_PREFIX_PATH
 ```
@@ -87,7 +115,7 @@ ros2 run hri_safety_core instruction_source
 ```
 Type a line such as:
 ```
-give me the red cup
+give me the left cup
 ```
 
 Expected: `/nl/parse_result` prints a JSON string with `candidates`, `score`,
@@ -164,7 +192,7 @@ ros2 topic echo /robot/utterance
 
 Try inputs like:
 ```
-give me the red cup
+give me the left cup
 hand me that cup
 pass the knife
 ```
@@ -219,7 +247,7 @@ API fails, the parser falls back to mock output and writes a fallback note.
 Step 6: RL Arbiter (PPO policy)
 Train a toy policy (symbolic env):
 ```
-cd ~/AttentiveSupport/mypaper/training
+cd /path/to/llmrl/training
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --index-url https://download.pytorch.org/whl/cpu torch
@@ -230,7 +258,7 @@ python train_ppo.py --total-timesteps 50000 --save-path ../hri_safety_ws/policie
 Run with RL arbiter (direct node):
 ```
 ros2 run hri_safety_core rl_arbiter_node --ros-args \\
-  -p policy_path:=/home/yankai/AttentiveSupport/mypaper/hri_safety_ws/policies/ppo_policy.zip \\
+  -p policy_path:=/path/to/llmrl/hri_safety_ws/policies/ppo_policy.zip \\
   -p deterministic:=true
 ```
 
@@ -238,7 +266,7 @@ Or switch via router:
 ```
 ros2 run hri_safety_core arbiter_router --ros-args \\
   -p arbiter_mode:=rl \\
-  -p policy_path:=/home/yankai/AttentiveSupport/mypaper/hri_safety_ws/policies/ppo_policy.zip
+  -p policy_path:=/path/to/llmrl/hri_safety_ws/policies/ppo_policy.zip
 ```
 
 Full pipeline launch:
@@ -256,7 +284,7 @@ ros2 launch hri_safety_core pipeline_full.launch.py parser_mode:=mock arbiter_mo
 Step 7: Symbolic env training + evaluation
 Train:
 ```
-cd ~/AttentiveSupport/mypaper/training
+cd /path/to/llmrl/training
 pip install --index-url https://download.pytorch.org/whl/cpu torch
 pip install stable-baselines3 gymnasium numpy tensorboard
 python train_ppo.py --total-timesteps 50000
@@ -271,27 +299,78 @@ The training script writes `ppo_policy.meta.json` alongside the policy.
 Step 8: ROS2 evaluation runner (CSV)
 Prepare an instruction list (one per line), then run:
 ```
-python3 ~/AttentiveSupport/mypaper/evaluation/ros_eval_runner.py \\
-  --instructions instructions.txt \\
+python3 evaluation/ros_eval_runner.py \\
+  --instructions instructions/base.txt \\
   --out-csv eval_results.csv
 ```
 
 Matrix mode (2x2 parser/arbiter):
 ```
-python3 ~/AttentiveSupport/mypaper/evaluation/ros_eval_runner.py --matrix \\
+python3 evaluation/ros_eval_runner.py --matrix \\
   --episodes 12 \\
   --results-dir results
 ```
 Outputs:
 - `results/<timestamp>_<parser>_<arbiter>.csv`
 - `results/summary.csv`
+- `results/eval_meta.json`
+Per-episode CSV fields include `task_success`, `safe_refusal`, and `failure_reason`.
+Summary adds `task_success_rate` and `safe_refusal_rate`.
+
+Parser-only (mock+rule, qwen+rule):
+```
+python3 evaluation/ros_eval_runner.py --matrix-parser-only \\
+  --episodes 12 \\
+  --results-dir results
+```
+If you see `reset_reason=missing_service`, start the episode manager:
+```
+ros2 run hri_safety_core episode_manager_node
+```
+Simulated user + limits (key flags):
+- `--max-turns-per-episode N` caps interactive turns per episode.
+- `--max-repeat-action N` caps repeats of the same query action.
+- `--clarify-left/--clarify-right/--clarify-default` set disambiguation replies.
+- `--point-response` sets the reply for `ASK_POINT`.
+- `--regression-test` runs 5 episodes and fails if clear instructions exceed 2 queries.
+
+One-command Gazebo matrix (wrapper):
+```
+./evaluation/run_matrix_gazebo.sh --episodes 12 --results-dir results
+```
+If the Gazebo GUI crashes, use headless mode:
+```
+./evaluation/run_matrix_gazebo.sh --episodes 12 --results-dir results --headless
+```
+
+Full 2x2 matrix (non-Gazebo, recommended first):
+```
+python3 evaluation/ros_eval_runner.py --matrix --episodes 12 --results-dir results \\
+  --launch-file pipeline_full.launch.py --no-reset \\
+  --policy-path hri_safety_ws/policies/ppo_policy.zip
+```
+
+Full 2x2 matrix (Gazebo headless):
+```
+./evaluation/run_matrix_gazebo.sh --episodes 12 --results-dir results --headless \\
+  --policy-path hri_safety_ws/policies/ppo_policy.zip
+```
+
+Report generation (tables + plots):
+```
+python3 evaluation/make_report.py --results-dir results
+```
+Outputs:
+- `report/summary.md`
+- `report/metrics.csv`
+- `report/*.png`
 
 Pipeline launch (router):
 ```
 ros2 launch hri_safety_core pipeline_router.launch.py \\
   parser_mode:=mock \\
   arbiter_mode:=rl \\
-  policy_path:=/home/yankai/AttentiveSupport/mypaper/hri_safety_ws/policies/ppo_policy.zip
+  policy_path:=/path/to/llmrl/hri_safety_ws/policies/ppo_policy.zip
 ```
 
 Notes
@@ -310,6 +389,12 @@ ros2 launch hri_safety_core gazebo_only.launch.py
 Launch pipeline (Gazebo + world state + parser/estimator/arbiter):
 ```
 ros2 launch hri_safety_core pipeline_gazebo.launch.py \\
+  parser_mode:=mock \\
+  arbiter_mode:=rule
+```
+Headless (no GUI, stable on machines without working OpenGL):
+```
+ros2 launch hri_safety_core pipeline_gazebo.launch.py headless:=true \\
   parser_mode:=mock \\
   arbiter_mode:=rule
 ```
@@ -353,7 +438,7 @@ ros2 service call /episode/reset std_srvs/srv/Trigger {}
 
 Evaluation runner with reset (Gazebo launch):
 ```
-python3 ~/AttentiveSupport/mypaper/evaluation/ros_eval_runner.py --matrix \\
+python3 evaluation/ros_eval_runner.py --matrix \\
   --launch-file pipeline_gazebo.launch.py \\
   --episodes 50
 ```

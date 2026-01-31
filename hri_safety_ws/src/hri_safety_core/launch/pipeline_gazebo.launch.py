@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -30,6 +31,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("deterministic", default_value="true"),
             DeclareLaunchArgument("world", default_value=default_world),
             DeclareLaunchArgument("ign_cmd", default_value="ign"),
+            DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument("ign_topic", default_value="/world/default/pose/info"),
             DeclareLaunchArgument("publish_hz", default_value="2.0"),
             DeclareLaunchArgument("command_timeout", default_value="2.0"),
@@ -49,6 +51,20 @@ def generate_launch_description() -> LaunchDescription:
                     "1",
                     LaunchConfiguration("world"),
                 ],
+                condition=UnlessCondition(LaunchConfiguration("headless")),
+                output="screen",
+            ),
+            ExecuteProcess(
+                cmd=[
+                    LaunchConfiguration("ign_cmd"),
+                    "gazebo",
+                    "-r",
+                    "-v",
+                    "1",
+                    "-s",
+                    LaunchConfiguration("world"),
+                ],
+                condition=IfCondition(LaunchConfiguration("headless")),
                 output="screen",
             ),
             Node(

@@ -123,3 +123,37 @@ class SymbolicSafetyEnv(gym.Env):
                 }
             )
         return self._get_obs(), reward, done, False, info
+
+
+class FeatureNoiseWrapper(gym.Wrapper):
+    def __init__(
+        self,
+        env: gym.Env,
+        noise_amb: float = 0.0,
+        noise_risk: float = 0.0,
+        noise_conflict: float = 0.0,
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(env)
+        self.noise_amb = max(0.0, float(noise_amb))
+        self.noise_risk = max(0.0, float(noise_risk))
+        self.noise_conflict = max(0.0, min(1.0, float(noise_conflict)))
+        self.rng = np.random.default_rng(seed)
+
+    def reset(self, *, seed: int | None = None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        return self._apply_noise(obs), info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        return self._apply_noise(obs), reward, terminated, truncated, info
+
+    def _apply_noise(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.array(obs, dtype=np.float32, copy=True)
+        if self.noise_amb > 0.0:
+            obs[0] = float(np.clip(obs[0] + self.rng.normal(0.0, self.noise_amb), 0.0, 1.0))
+        if self.noise_risk > 0.0:
+            obs[1] = float(np.clip(obs[1] + self.rng.normal(0.0, self.noise_risk), 0.0, 1.0))
+        if self.noise_conflict > 0.0 and self.rng.random() < self.noise_conflict:
+            obs[2] = 1.0 - obs[2]
+        return obs

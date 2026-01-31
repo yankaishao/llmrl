@@ -11,6 +11,11 @@ Train a quick policy:
 python train_ppo.py --total-timesteps 50000 --save-path ../hri_safety_ws/policies/ppo_policy.zip
 ```
 
+Reproducible training (seed + noise):
+```
+python train_ppo.py --total-timesteps 20000 --seed 123 --noise-scale 0.05
+```
+
 Evaluate and export CSV:
 ```
 python eval_policy.py --policy-path ../hri_safety_ws/policies/ppo_policy.zip --episodes 100 --out-csv eval_results.csv
