@@ -1,0 +1,37 @@
+{
+  "timestamp": "20260131_235013",
+  "instructions_path": "instructions/base.txt",
+  "episodes": 5,
+  "matrix": true,
+  "matrix_parser_only": false,
+  "parser_modes": [
+    "mock",
+    "qwen"
+  ],
+  "arbiter_modes": [
+    "rule",
+    "rl"
+  ],
+  "policy_path": "hri_safety_ws/policies/ppo_policy_seed0.zip",
+  "launch_file": "pipeline_full.launch.py",
+  "headless": false,
+  "launch_wait": 2.0,
+  "timeout_sec": 2.0,
+  "reset_timeout_sec": 2.0,
+  "use_reset": false,
+  "limits": {
+    "max_turns_per_episode": 10,
+    "max_repeat_action": 3
+  },
+  "simulated_user": {
+    "clarify_left": "the left cup",
+    "clarify_right": "the right cup",
+    "clarify_default": "the left cup",
+    "point_response": "the left cup",
+    "confirm_rule": "yes if risk < 0.7 and conflict == 0"
+  },
+  "thresholds": {
+    "risk_threshold": 0.7,
+    "conflict_values": "1 means conflict"
+  }
+}

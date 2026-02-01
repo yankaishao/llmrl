@@ -10,3 +10,9 @@ report/
 **/*.zip
 **/*.csv
 **/*.png
+
+# allow report and results
+!report/
+!report/**
+!results/
+!results/**

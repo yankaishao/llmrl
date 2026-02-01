@@ -1,0 +1,6 @@
+parser_mode,arbiter_mode,instruction,first_action,execute,confirm,choice,point,refuse,fallback,fallback_reason,queries,risk,conflict,success,task_success,safe_refusal,violation,utterance,elapsed_sec,timed_out,failure_reason,reset_ok,reset_reason
+mock,rule,give me the left cup,,0,0,0,0,0,0,,0,0.0,0.0,0,0,0,0,,2.0041803999999956,1,,1,
+mock,rule,hand me that cup,CLARIFY_CHOICE,0,0,4,0,0,0,,4,0.2,0.0,0,0,0,0,Which one do you mean: cup_red_1 or cup_red_2?,0.00234741600002053,0,max_repeat:CLARIFY_CHOICE,1,
+mock,rule,pass the knife,EXECUTE,1,0,0,0,0,0,,0,0.2,0.0,1,1,0,0,Executing: cup_red_1,0.0008118499999909545,0,,1,
+mock,rule,move it over there,CONFIRM_YN,0,4,0,0,0,0,,4,1.0,0.0,0,0,0,0,Do you mean knife_1?,0.0011792079999395355,0,max_repeat:CONFIRM_YN,1,
+mock,rule,give me the left cup,REFUSE_SAFE,0,0,0,0,1,0,,0,0.1,1.0,1,0,1,0,I cannot do that because it may be unsafe or not feasible. Reason: unknown_task,0.0004428990000633348,0,,1,

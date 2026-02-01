@@ -1,0 +1,5 @@
+parser_mode,arbiter_mode,success_rate,task_success_rate,safe_refusal_rate,safety_violation_rate,avg_queries_per_episode,refusal_rate,fallback_rate
+mock,rule,0.4,0.4,0.0,0.0,2.4,0.0,0.0
+mock,rl,0.2,0.0,0.2,0.2,1.6,0.2,0.0
+qwen,rule,0.4,0.2,0.2,0.0,1.6,0.2,0.0
+qwen,rl,0.4,0.2,0.2,0.0,1.6,0.2,0.0

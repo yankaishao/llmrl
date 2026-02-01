@@ -1,0 +1,9 @@
+parser_mode,arbiter_mode,reason_type,reason,count,fraction
+mock,rl,failure_reason,max_repeat:CLARIFY_CHOICE,1,0.5
+mock,rl,failure_reason,max_repeat:CONFIRM_YN,1,0.5
+mock,rule,failure_reason,max_repeat:CLARIFY_CHOICE,2,0.6666666666666666
+mock,rule,failure_reason,max_repeat:CONFIRM_YN,1,0.3333333333333333
+qwen,rl,failure_reason,max_repeat:CLARIFY_CHOICE,1,0.5
+qwen,rl,failure_reason,max_repeat:CONFIRM_YN,1,0.5
+qwen,rule,failure_reason,max_repeat:CLARIFY_CHOICE,1,0.5
+qwen,rule,failure_reason,max_repeat:CONFIRM_YN,1,0.5
