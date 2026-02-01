@@ -2,6 +2,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from hri_safety_core.parse_result_utils import extract_candidate_object_id
+
 A_HIGH_DEFAULT = 0.4
 R_HIGH_DEFAULT = 0.7
 
@@ -59,6 +61,11 @@ def extract_candidates(parse_result: Dict[str, object]) -> List[Tuple[str, float
         score = item.get("score")
         if isinstance(obj_id, str) and isinstance(score, (int, float)):
             candidates.append((obj_id, float(score)))
+            continue
+        confidence = item.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            cand_id = extract_candidate_object_id(item)
+            candidates.append((cand_id, float(confidence)))
     return candidates
 
 

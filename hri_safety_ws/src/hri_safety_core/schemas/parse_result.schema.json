@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ParseResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "request_id",
+    "input",
+    "scene",
+    "candidates",
+    "missing_slots",
+    "contradictions",
+    "hazards",
+    "clarifying_questions",
+    "meta"
+  ],
+  "properties": {
+    "version": {"type": "string"},
+    "request_id": {"type": "string"},
+    "input": {"$ref": "#/definitions/input"},
+    "scene": {"$ref": "#/definitions/scene"},
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {"$ref": "#/definitions/candidate"}
+    },
+    "missing_slots": {"type": "array", "items": {"type": "string"}},
+    "contradictions": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/contradiction"}
+    },
+    "hazards": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/hazard"}
+    },
+    "clarifying_questions": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {"$ref": "#/definitions/clarifying_question"}
+    },
+    "meta": {"$ref": "#/definitions/meta"}
+  },
+  "definitions": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "lang", "timestamp"],
+      "properties": {
+        "text": {"type": "string"},
+        "lang": {"type": ["string", "null"]},
+        "timestamp": {"type": ["number", "null"]}
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "objects", "timestamp"],
+      "properties": {
+        "summary": {"type": ["string", "null"]},
+        "objects": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/scene_object"}
+        },
+        "timestamp": {"type": ["number", "null"]}
+      }
+    },
+    "scene_object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "tags"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "slots", "skill", "confidence", "why", "risk_hints"],
+      "properties": {
+        "intent": {"type": "string"},
+        "slots": {"type": "object", "additionalProperties": true},
+        "skill": {"$ref": "#/definitions/skill"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "why": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {"type": "string", "maxLength": 120}
+        },
+        "risk_hints": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "args"],
+      "properties": {
+        "name": {"type": ["string", "null"]},
+        "args": {"type": ["object", "null"], "additionalProperties": true}
+      }
+    },
+    "contradiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "detail", "severity"],
+      "properties": {
+        "type": {"type": "string"},
+        "detail": {"type": "string"},
+        "severity": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+      }
+    },
+    "hazard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "severity", "evidence"],
+      "properties": {
+        "tag": {"type": "string"},
+        "severity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "clarifying_question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["q_type", "text", "target_slots", "priority"],
+      "properties": {
+        "q_type": {"type": "string"},
+        "text": {"type": "string"},
+        "target_slots": {"type": "array", "items": {"type": "string"}},
+        "priority": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "latency_ms", "parse_mode", "debug"],
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "latency_ms": {"type": ["number", "null"], "minimum": 0.0},
+        "parse_mode": {"type": "string"},
+        "debug": {"type": ["object", "null"], "additionalProperties": true}
+      }
+    }
+  }
+}

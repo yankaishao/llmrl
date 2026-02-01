@@ -11,6 +11,11 @@ Train a quick policy:
 python train_ppo.py --total-timesteps 50000 --save-path ../hri_safety_ws/policies/ppo_policy.zip
 ```
 
+Dialogue-style env (asks questions before executing):
+```
+python train_ppo.py --env dialogue --total-timesteps 200000 --max-steps 5
+```
+
 Reproducible training (seed + noise):
 ```
 python train_ppo.py --total-timesteps 20000 --seed 123 --noise-scale 0.05

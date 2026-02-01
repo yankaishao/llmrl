@@ -68,6 +68,42 @@ Nodes and topics
 - `dialogue_manager` publishes `/arbiter/action`, `/robot/utterance`, and `/dialogue/debug_state`
 - `rule_based_arbiter` publishes `/arbiter/action` and `/robot/utterance` (legacy)
 
+Natural Language -> ParseResult -> Safety Features
+Pipeline (topics):
+```
+/user/instruction or /dialogue/context_instruction
+    + /scene/summary (+ optional /scene/state_json)
+    -> parser_router (parser_mode=qwen_structured)
+    -> /nl/parse_result (ParseResult v1)
+    -> estimator_node -> /safety/features
+    -> dialogue_manager / arbiter
+```
+
+Enable structured parser:
+```
+ros2 launch hri_safety_core pipeline_full.launch.py \\
+  use_dialogue_manager:=true parser_mode:=qwen_structured
+```
+Set `QWEN_API_KEY=...` or use a repo-root `.env` file.
+
+Schema location:
+- `hri_safety_ws/src/hri_safety_core/schemas/parse_result.schema.json`
+
+Demo script:
+```
+python scripts/demo_nl_to_features.py --parser mock
+python scripts/demo_nl_to_features.py --parser qwen_structured
+```
+
+Failure + fallback behavior:
+- Parser failure -> fallback to structured mock parse.
+- Features failure -> conservative output (amb=1, risk=1, conflict=1) and query/refuse paths.
+
+Safety + privacy:
+- Do not infer sensitive attributes (age, demographics) from text.
+- Age context is only from `/user/age_context` and remains probabilistic.
+- Logs avoid full user text; .env is ignored by git.
+
 RL action set (6 actions)
 - EXECUTE
 - CONFIRM_YN

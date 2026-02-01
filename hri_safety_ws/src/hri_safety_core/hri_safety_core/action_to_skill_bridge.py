@@ -1,9 +1,18 @@
 import json
 from typing import Tuple
 
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import String
+try:
+    import rclpy
+    from rclpy.node import Node
+    from std_msgs.msg import String
+except ImportError:  # pragma: no cover - optional ROS dependency for non-ROS tests
+    rclpy = None
+
+    class Node:  # type: ignore[override]
+        pass
+
+    class String:  # type: ignore[override]
+        pass
 
 
 DEFAULT_PLACE_POSITION = "0.4,-0.3,0.8"
@@ -39,6 +48,8 @@ def _pose_from_vector3(vec: Tuple[float, float, float]) -> dict:
 
 class ActionToSkillBridge(Node):
     def __init__(self) -> None:
+        if rclpy is None:
+            raise RuntimeError("rclpy_not_available")
         super().__init__("action_to_skill_bridge")
         self.declare_parameter("place_position", DEFAULT_PLACE_POSITION)
         self.declare_parameter("handover_position", DEFAULT_HANDOVER_POSITION)

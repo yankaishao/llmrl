@@ -5,6 +5,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from hri_safety_core.estimator.features_from_parse import features_from_parse_result
+
 RISK_RULES = [
     ("knife", 1.0),
     ("glass", 0.7),
@@ -92,33 +94,73 @@ def _build_features(parse_result: Dict[str, object]) -> Dict[str, object]:
 class EstimatorNode(Node):
     def __init__(self) -> None:
         super().__init__("estimator_node")
+        self.declare_parameter("use_age_context", False)
+        self.declare_parameter("age_context_topic", "/user/age_context")
         self.publisher_ = self.create_publisher(String, "/safety/features", 10)
         self.last_summary = ""
+        self.last_age_context: Optional[Dict[str, object]] = None
         self.create_subscription(String, "/scene/summary", self.on_summary, 10)
         self.create_subscription(String, "/nl/parse_result", self.on_parse_result, 10)
+        if bool(self.get_parameter("use_age_context").value):
+            age_topic = str(self.get_parameter("age_context_topic").value)
+            self.create_subscription(String, age_topic, self.on_age_context, 10)
         self.get_logger().info("estimator_node started.")
 
     def on_summary(self, msg: String) -> None:
         self.last_summary = msg.data
 
+    def on_age_context(self, msg: String) -> None:
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(data, dict):
+            self.last_age_context = data
+
     def on_parse_result(self, msg: String) -> None:
         try:
             data = json.loads(msg.data)
         except json.JSONDecodeError:
-            features = {
-                "amb": 1.0,
-                "risk": DEFAULT_RISK,
-                "conflict": 1,
-                "conflict_reason": "invalid_json",
-                "selected_top1_id": "",
-            }
+            features = _conservative_features("invalid_json")
         else:
-            features = _build_features(data)
+            try:
+                if isinstance(data, dict):
+                    features = features_from_parse_result(data, self.last_age_context)
+                else:
+                    features = _conservative_features("invalid_payload")
+            except Exception:
+                features = _conservative_features("feature_error")
 
         out = String()
         out.data = json.dumps(features, ensure_ascii=True)
         self.publisher_.publish(out)
         self.get_logger().info("published /safety/features")
+
+
+def _conservative_features(reason: str) -> Dict[str, object]:
+    return {
+        "amb": 1.0,
+        "risk": 1.0,
+        "conflict": 1.0,
+        "conflict_reason": reason,
+        "selected_top1_id": "",
+        "p_top": 0.0,
+        "margin": 0.0,
+        "entropy": 0.0,
+        "missing_slots_count": 3,
+        "missing_slots_critical": 1,
+        "hazard_tag_top": "",
+        "hazard_severity_top": 0.0,
+        "suggested_question_types": ["clarify"],
+        "action_mask": {
+            "EXECUTE": 0,
+            "CONFIRM_YN": 1,
+            "CLARIFY_CHOICE": 1,
+            "ASK_POINT": 1,
+            "REFUSE_SAFE": 1,
+            "FALLBACK_HUMAN_HELP": 1,
+        },
+    }
 
 
 def main() -> None:

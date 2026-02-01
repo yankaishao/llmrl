@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Dict, List, Optional, Tuple
 
 from hri_safety_core.arbiter_utils import clamp, safe_float, safe_int
@@ -19,6 +20,21 @@ ACTION_NAMES = [
 ]
 QUERY_ACTIONS = {"CONFIRM_YN", "CLARIFY_CHOICE", "ASK_POINT"}
 HAZARD_KEYWORDS = {"knife", "scissors", "blade", "cutter", "sharp"}
+BELIEF_V1_FIELDS = [
+    "amb",
+    "risk",
+    "conflict",
+    "p_top",
+    "margin",
+    "entropy",
+    "missing_slots_count",
+    "query_count",
+    "last_outcome",
+    "p_minor",
+    "age_conf",
+    "guardian_code",
+    "hazard_top",
+]
 
 AGE_CONTEXT_DEFAULT = {
     "p_minor": 0.0,
@@ -37,6 +53,7 @@ class BeliefState:
     amb: float
     risk: float
     conflict: int
+    entropy: float
     turn_sys_asks: int
     last_user_reply_type: str
     history_summary: str
@@ -54,6 +71,8 @@ class BeliefState:
     guardian_present: Optional[bool]
     hazard: bool
     hazard_reason: str
+    hazard_tag_top: str
+    hazard_severity_top: float
 
     def to_vector(self, max_turns: int) -> List[float]:
         missing_norm = clamp(float(self.missing_slots) / 3.0)
@@ -74,6 +93,26 @@ class BeliefState:
             clamp(self.p_older),
             clamp(self.age_conf),
             float(guardian_code),
+        ]
+
+    def to_vector_v1(self) -> List[float]:
+        guardian_code = guardian_present_code(self.guardian_present)
+        missing_norm = clamp(float(self.missing_slots) / 3.0)
+        hazard_top = clamp(self.hazard_severity_top)
+        return [
+            clamp(self.amb),
+            clamp(self.risk),
+            float(self.conflict),
+            clamp(self.p_top),
+            clamp(self.margin),
+            clamp(self.entropy),
+            missing_norm,
+            float(self.query_count),
+            float(self.last_outcome),
+            clamp(self.p_minor),
+            clamp(self.age_conf),
+            float(guardian_code),
+            hazard_top,
         ]
 
 
@@ -122,6 +161,23 @@ def extract_candidates(parse_result: Dict[str, object]) -> List[Tuple[str, float
         score = item.get("score")
         if isinstance(obj_id, str) and isinstance(score, (int, float)):
             candidates.append((obj_id, float(score)))
+            continue
+        confidence = item.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            slots = item.get("slots", {})
+            obj = ""
+            if isinstance(slots, dict):
+                for key in ["object_id", "object", "target_object", "target_object_id", "item", "item_id"]:
+                    value = slots.get(key)
+                    if isinstance(value, str) and value:
+                        obj = value
+                        break
+                    if isinstance(value, dict):
+                        inner = value.get("id")
+                        if isinstance(inner, str) and inner:
+                            obj = inner
+                            break
+            candidates.append((obj, float(confidence)))
     candidates.sort(key=lambda item: item[1], reverse=True)
     return candidates
 
@@ -131,6 +187,24 @@ def _normalize_probs(p_minor: float, p_adult: float, p_older: float) -> Tuple[fl
     if total <= 0:
         return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
     return (p_minor / total, p_adult / total, p_older / total)
+
+
+def _entropy_from_candidates(candidates: List[Tuple[str, float]]) -> float:
+    if not candidates:
+        return 0.0
+    scores = [max(0.0, float(score)) for _obj_id, score in candidates]
+    total = sum(scores)
+    if total <= 0:
+        return 0.0
+    probs = [score / total for score in scores]
+    if len(probs) <= 1:
+        return 0.0
+    entropy = 0.0
+    for p in probs:
+        if p <= 0:
+            continue
+        entropy -= p * math.log(p + 1e-12)
+    return clamp(entropy / math.log(len(probs)))
 
 
 def parse_age_context(age_context: Optional[Dict[str, object]], use_age_context: bool) -> Dict[str, object]:
@@ -172,6 +246,11 @@ def parse_age_context(age_context: Optional[Dict[str, object]], use_age_context:
 
 def detect_hazard(parse_result: Dict[str, object], features: Dict[str, object]) -> Tuple[bool, str]:
     reason = ""
+    hazard_tag = str(features.get("hazard_tag_top", "")) if isinstance(features, dict) else ""
+    hazard_sev = features.get("hazard_severity_top", 0.0) if isinstance(features, dict) else 0.0
+    if hazard_tag and isinstance(hazard_sev, (int, float)) and float(hazard_sev) > 0.4:
+        return True, "hazard_top"
+
     selected = str(features.get("selected_top1_id", "")) if isinstance(features, dict) else ""
     selected_lower = selected.lower()
     if any(keyword in selected_lower for keyword in HAZARD_KEYWORDS):
@@ -191,6 +270,15 @@ def detect_hazard(parse_result: Dict[str, object], features: Dict[str, object]) 
                 hint_str = str(hint).lower()
                 if any(keyword in hint_str for keyword in HAZARD_KEYWORDS):
                     return True, "risk_hints"
+
+    hazards = parse_result.get("hazards", []) if isinstance(parse_result, dict) else []
+    if isinstance(hazards, list):
+        for hazard in hazards:
+            if not isinstance(hazard, dict):
+                continue
+            tag = str(hazard.get("tag", "")).lower()
+            if any(keyword in tag for keyword in HAZARD_KEYWORDS):
+                return True, "hazard_tag"
 
     return False, reason
 
@@ -221,18 +309,35 @@ def build_belief_state(
     top1_score = candidates[0][1] if candidates else 0.0
     top2_score = candidates[1][1] if len(candidates) > 1 else 0.0
     margin = max(0.0, top1_score - top2_score)
+    entropy = _entropy_from_candidates(candidates)
 
     task_type = parse_result.get("task_type", "unknown") if isinstance(parse_result, dict) else "unknown"
-    if not isinstance(task_type, str):
+    if not isinstance(task_type, str) or task_type == "unknown":
+        task_type = str(features.get("top_intent", "")) if isinstance(features, dict) else "unknown"
+    if not task_type:
         task_type = "unknown"
-    missing_slots = compute_missing_slots(task_type, candidates)
+
+    missing_slots_list = []
+    if isinstance(parse_result, dict):
+        raw_missing = parse_result.get("missing_slots", [])
+        if isinstance(raw_missing, list):
+            missing_slots_list = [slot for slot in raw_missing if isinstance(slot, str)]
+    if missing_slots_list:
+        missing_slots = min(3, len(missing_slots_list))
+    else:
+        missing_slots = compute_missing_slots(task_type, candidates)
 
     amb = clamp(safe_float(features.get("amb", 1.0)))
     risk = clamp(safe_float(features.get("risk", 0.0)))
     conflict = safe_int(features.get("conflict", 0))
+    p_top = clamp(safe_float(features.get("p_top", top1_score)))
+    margin = clamp(safe_float(features.get("margin", margin)))
+    entropy = clamp(safe_float(features.get("entropy", entropy)))
 
     selected_top1_id = str(features.get("selected_top1_id", ""))
     conflict_reason = str(features.get("conflict_reason", ""))
+    hazard_tag_top = str(features.get("hazard_tag_top", ""))
+    hazard_severity_top = clamp(safe_float(features.get("hazard_severity_top", 0.0)))
 
     clarify_templates = {}
     if isinstance(parse_result, dict):
@@ -246,12 +351,13 @@ def build_belief_state(
     age = parse_age_context(age_context, use_age_context)
     hazard, hazard_reason = detect_hazard(parse_result, features)
     return BeliefState(
-        p_top=clamp(top1_score),
-        margin=clamp(margin),
+        p_top=p_top,
+        margin=margin,
         missing_slots=missing_slots,
         amb=amb,
         risk=risk,
         conflict=conflict,
+        entropy=entropy,
         turn_sys_asks=int(turn_sys_asks),
         last_user_reply_type=last_user_reply_type,
         history_summary=history_summary,
@@ -269,6 +375,8 @@ def build_belief_state(
         guardian_present=age["guardian_present"],
         hazard=hazard,
         hazard_reason=hazard_reason,
+        hazard_tag_top=hazard_tag_top,
+        hazard_severity_top=hazard_severity_top,
     )
 
 

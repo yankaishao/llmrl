@@ -39,6 +39,8 @@ class Sb3Policy(PolicyBase):
     def _build_obs(self, belief: BeliefState) -> np.ndarray:
         if self.obs_mode == "belief":
             return np.array(belief.to_vector(max_turns=self.max_turns), dtype=np.float32)
+        if self.obs_mode in {"belief_v1", "extended"}:
+            return np.array(belief.to_vector_v1(), dtype=np.float32)
         features = {"amb": belief.amb, "risk": belief.risk, "conflict": belief.conflict}
         return build_rl_observation(features, query_count=belief.query_count, last_outcome=belief.last_outcome)
 

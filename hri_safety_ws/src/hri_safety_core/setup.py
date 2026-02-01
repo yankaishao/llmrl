@@ -7,7 +7,7 @@ package_name = "hri_safety_core"
 setup(
     name=package_name,
     version="0.0.0",
-    packages=[package_name, package_name + ".policy"],
+    packages=[package_name, package_name + ".policy", package_name + ".estimator"],
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
@@ -21,6 +21,7 @@ setup(
                 "launch/pipeline_gazebo.launch.py",
             ],
         ),
+        ("share/" + package_name + "/schemas", ["schemas/parse_result.schema.json"]),
         ("share/" + package_name + "/worlds", glob("worlds/*.sdf") + glob("worlds/*.world")),
     ],
     install_requires=["setuptools"],

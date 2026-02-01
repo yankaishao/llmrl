@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-from hri_safety_core.arbiter_utils import R_HIGH_DEFAULT, utterance_for_action
+from hri_safety_core.arbiter_utils import R_HIGH_DEFAULT, extract_candidates, top_two_candidates, utterance_for_action
 from hri_safety_core.belief_tracker import (
     QUERY_ACTIONS,
     build_action_mask,
@@ -135,9 +135,8 @@ class DialogueManagerCore:
         selected_id = str(features.get("selected_top1_id", ""))
         top_candidates = []
         if self.parse_result:
-            candidates = self.parse_result.get("candidates", [])
-            if isinstance(candidates, list):
-                top_candidates = [item.get("id", "") for item in candidates if isinstance(item, dict)][:2]
+            candidates = extract_candidates(self.parse_result)
+            top_candidates = top_two_candidates(candidates)
 
         if conflict == 1 or risk >= risk_high:
             action = "REFUSE_SAFE"

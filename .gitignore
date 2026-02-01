@@ -19,3 +19,11 @@ report/
 !report/**
 !results/
 !results/**
+
+# python cache
+__pycache__/
+*.pyc
+
+# training artifacts
+training/runs/
+
