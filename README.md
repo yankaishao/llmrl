@@ -57,14 +57,16 @@ ROS_VERSION=2
 Nodes and topics
 - `instruction_source` publishes `/user/instruction` (std_msgs/String)
 - `instruction_listener` subscribes `/user/instruction` and logs messages
+- `age_context_adapter` publishes `/user/age_context` (std_msgs/String JSON)
 - `scene_summary_stub` publishes `/scene/summary` (std_msgs/String) at 1 Hz
-- `mock_llm_parser` subscribes `/user/instruction` + `/scene/summary` and
+- `mock_llm_parser` subscribes `/user/instruction` (or `/dialogue/context_instruction`) + `/scene/summary` and
   publishes `/nl/parse_result` (std_msgs/String JSON)
-- `qwen_api_parser` subscribes `/user/instruction` + `/scene/summary` and
+- `qwen_api_parser` subscribes `/user/instruction` (or `/dialogue/context_instruction`) + `/scene/summary` and
   publishes `/nl/parse_result` (Qwen API, JSON schema compatible)
 - `parser_router` publishes `/nl/parse_result` and routes mock vs qwen
 - `estimator_node` publishes `/safety/features` (std_msgs/String JSON)
-- `rule_based_arbiter` publishes `/arbiter/action` and `/robot/utterance`
+- `dialogue_manager` publishes `/arbiter/action`, `/robot/utterance`, and `/dialogue/debug_state`
+- `rule_based_arbiter` publishes `/arbiter/action` and `/robot/utterance` (legacy)
 
 RL action set (6 actions)
 - EXECUTE
@@ -73,6 +75,63 @@ RL action set (6 actions)
 - ASK_POINT
 - REFUSE_SAFE
 - FALLBACK_HUMAN_HELP (safe downgrade / ask human to confirm or take over)
+
+Multi-turn Dialogue (max 5 turns)
+The dialogue manager enforces a hard max turn budget (default 5, counting system questions
+and user replies). When the budget is exhausted, it returns REFUSE_SAFE (if risk/conflict
+is high) or FALLBACK_HUMAN_HELP.
+
+Launch (non-Gazebo, recommended):
+```
+ros2 launch hri_safety_core pipeline_full.launch.py use_dialogue_manager:=true
+```
+
+Key parameters:
+- `max_turns` (default 5)
+- `max_repeat_action` (default 2)
+- `policy_backend` via `arbiter_mode` (rule | rl)
+- `policy_path` (required for rl)
+
+Example (rule policy with 5-turn limit):
+```
+ros2 launch hri_safety_core pipeline_full.launch.py \
+  use_dialogue_manager:=true arbiter_mode:=rule max_turns:=5
+```
+
+Demo script (mock parser + dialogue manager):
+```
+bash scripts/demo_dialogue_5turn.sh
+```
+
+User Age Context (probabilistic)
+Age context is a privacy-minimized, probabilistic signal (no raw images stored).
+It can be injected via `/user/age_context` and used to make the policy more conservative
+for hazardous requests involving minors when confidence is high.
+
+Schema (std_msgs/String JSON):
+```
+{
+  "p_minor": 0.0-1.0,
+  "p_adult": 0.0-1.0,
+  "p_older": 0.0-1.0,
+  "age_conf": 0.0-1.0,
+  "guardian_present": true/false/null,
+  "source": "cv|manual|sim",
+  "ts": 1234567890.0
+}
+```
+
+Enable in the pipeline (off by default):
+```
+ros2 launch hri_safety_core pipeline_full.launch.py \
+  use_dialogue_manager:=true use_age_context:=true age_context_mode:=manual \
+  age_p_minor:=0.9 age_p_adult:=0.1 age_p_older:=0.0 age_conf:=0.9
+```
+
+Adapter node modes:
+- `manual`: use configured probabilities
+- `sim`: randomized with misclassification noise
+- `cv_stub`: placeholder for future CV integration (no face data stored)
 
 Build
 ```

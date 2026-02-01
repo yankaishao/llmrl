@@ -10,6 +10,10 @@ DEFAULT_PLACE_POSITION = "0.4,-0.3,0.8"
 DEFAULT_HANDOVER_POSITION = "0.6,0.0,1.0"
 
 
+def should_dispatch_skill(action: str) -> bool:
+    return action.strip().upper() == "EXECUTE"
+
+
 def _parse_vector3(value: object, default: Tuple[float, float, float]) -> Tuple[float, float, float]:
     if isinstance(value, (list, tuple)) and len(value) >= 3:
         try:
@@ -90,7 +94,7 @@ class ActionToSkillBridge(Node):
 
     def on_action(self, msg: String) -> None:
         action = msg.data.strip().upper()
-        if action != "EXECUTE":
+        if not should_dispatch_skill(action):
             return
         if self.pending_stage:
             return

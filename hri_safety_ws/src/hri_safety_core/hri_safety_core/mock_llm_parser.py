@@ -10,11 +10,13 @@ from hri_safety_core.parser_utils import DEFAULT_SCENE_SUMMARY, mock_parse
 class MockLlmParser(Node):
     def __init__(self) -> None:
         super().__init__("mock_llm_parser")
+        self.declare_parameter("input_topic", "/user/instruction")
         self.publisher_ = self.create_publisher(String, "/nl/parse_result", 10)
         self.last_summary = DEFAULT_SCENE_SUMMARY
+        self.input_topic = str(self.get_parameter("input_topic").value)
         self.create_subscription(String, "/scene/summary", self.on_summary, 10)
-        self.create_subscription(String, "/user/instruction", self.on_instruction, 10)
-        self.get_logger().info("mock_llm_parser started.")
+        self.create_subscription(String, self.input_topic, self.on_instruction, 10)
+        self.get_logger().info(f"mock_llm_parser started input_topic={self.input_topic}.")
 
     def on_summary(self, msg: String) -> None:
         self.last_summary = msg.data

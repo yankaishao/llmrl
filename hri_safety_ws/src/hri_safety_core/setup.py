@@ -7,7 +7,7 @@ package_name = "hri_safety_core"
 setup(
     name=package_name,
     version="0.0.0",
-    packages=[package_name],
+    packages=[package_name, package_name + ".policy"],
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
@@ -46,6 +46,8 @@ setup(
             "skill_executor_gazebo = hri_safety_core.skill_executor_gazebo:main",
             "action_to_skill_bridge = hri_safety_core.action_to_skill_bridge:main",
             "episode_manager_node = hri_safety_core.episode_manager_node:main",
+            "dialogue_manager = hri_safety_core.dialogue_manager_node:main",
+            "age_context_adapter = hri_safety_core.age_context_adapter_node:main",
         ],
     },
 )

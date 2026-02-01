@@ -11,6 +11,9 @@ report/
 **/*.csv
 **/*.png
 
+# Local env files
+.env
+
 # allow report and results
 !report/
 !report/**
