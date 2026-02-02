@@ -21,10 +21,10 @@ from hri_safety_core.scene_utils import build_scene_payload
 
 DEFAULT_STRUCTURED_MODEL = "qwen3-max"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_API_KEY_ENV = "QWEN_API_KEY"
+DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_TIMEOUT_SEC = 12.0
 DEFAULT_MAX_RETRIES = 2
-DEFAULT_TEMPERATURE = 0.0
+DEFAULT_TEMPERATURE = 1e-9
 DEFAULT_MAX_TOKENS = 640
 DEFAULT_CACHE_SIZE = 128
 DEFAULT_FALLBACK_MODE = "mock"
@@ -80,6 +80,77 @@ def _extract_json(text: str) -> str:
     return text[start : end + 1]
 
 
+def _soft_fill_parse_result(parsed: Dict[str, object]) -> Dict[str, object]:
+    if not isinstance(parsed, dict):
+        return {}
+
+    version = parsed.get("version")
+    if not isinstance(version, str):
+        parsed["version"] = PARSE_RESULT_VERSION
+
+    request_id = parsed.get("request_id")
+    if not isinstance(request_id, str):
+        parsed["request_id"] = "req_placeholder"
+
+    input_payload = parsed.get("input") if isinstance(parsed.get("input"), dict) else {}
+    if not isinstance(input_payload.get("text"), str):
+        input_payload["text"] = ""
+    if "lang" not in input_payload:
+        input_payload["lang"] = None
+    lang = input_payload.get("lang")
+    if not (isinstance(lang, str) or lang is None):
+        input_payload["lang"] = None
+    if "timestamp" not in input_payload:
+        input_payload["timestamp"] = None
+    timestamp = input_payload.get("timestamp")
+    if not (isinstance(timestamp, (int, float)) or timestamp is None):
+        input_payload["timestamp"] = None
+    parsed["input"] = input_payload
+
+    scene_payload = parsed.get("scene") if isinstance(parsed.get("scene"), dict) else {}
+    if "summary" not in scene_payload:
+        scene_payload["summary"] = None
+    summary = scene_payload.get("summary")
+    if not (isinstance(summary, str) or summary is None):
+        scene_payload["summary"] = None
+    if "objects" not in scene_payload:
+        scene_payload["objects"] = []
+    objects = scene_payload.get("objects")
+    if not isinstance(objects, list):
+        scene_payload["objects"] = []
+    if "timestamp" not in scene_payload:
+        scene_payload["timestamp"] = None
+    timestamp = scene_payload.get("timestamp")
+    if not (isinstance(timestamp, (int, float)) or timestamp is None):
+        scene_payload["timestamp"] = None
+    parsed["scene"] = scene_payload
+
+    meta_payload = parsed.get("meta") if isinstance(parsed.get("meta"), dict) else {}
+    if "model" not in meta_payload:
+        meta_payload["model"] = None
+    model_value = meta_payload.get("model")
+    if not (isinstance(model_value, str) or model_value is None):
+        meta_payload["model"] = None
+    if "latency_ms" not in meta_payload:
+        meta_payload["latency_ms"] = None
+    latency = meta_payload.get("latency_ms")
+    if not (isinstance(latency, (int, float)) or latency is None):
+        meta_payload["latency_ms"] = None
+    if "parse_mode" not in meta_payload:
+        meta_payload["parse_mode"] = "qwen_structured"
+    parse_mode = meta_payload.get("parse_mode")
+    if not isinstance(parse_mode, str):
+        meta_payload["parse_mode"] = "qwen_structured"
+    if "debug" not in meta_payload:
+        meta_payload["debug"] = {}
+    debug = meta_payload.get("debug")
+    if not (isinstance(debug, dict) or debug is None):
+        meta_payload["debug"] = {}
+    parsed["meta"] = meta_payload
+
+    return parsed
+
+
 def _find_env_file(start: Path) -> Optional[Path]:
     for parent in [start, *start.parents]:
         candidate = parent / ".env"
@@ -105,9 +176,11 @@ def _load_env_file(env_path: Path) -> None:
 
 
 def _resolve_api_key(api_key_env: str) -> str:
-    value = os.getenv(api_key_env, "")
-    if not value and api_key_env != "OPENAI_API_KEY":
-        value = os.getenv("OPENAI_API_KEY", "")
+    value = ""
+    for key in (api_key_env, "OPENAI_API_KEY", "QWEN_API_KEY"):
+        value = os.getenv(key, "")
+        if value:
+            break
     if not value:
         return ""
     if os.path.isfile(value):
@@ -297,8 +370,9 @@ class QwenStructuredClient:
                     "tools": tools,
                     "tool_choice": {"type": "function", "function": {"name": "emit_parse_result"}},
                 }
-                response_json = _post_json(url, payload, api_key, self.timeout_sec)
+                response_json = _post_or_openai(self.base_url, url, payload, api_key, self.timeout_sec)
                 parsed = self._extract_parse_result(response_json)
+                parsed = _soft_fill_parse_result(parsed)
                 ok, errors = validate_parse_result(parsed)
                 if ok:
                     return parsed
@@ -427,6 +501,45 @@ def _post_json(url: str, payload: Dict[str, object], api_key: str, timeout_sec: 
     with urllib.request.urlopen(request, timeout=timeout_sec) as response:
         response_text = response.read().decode("utf-8")
     return json.loads(response_text)
+
+
+def _openai_response_to_dict(response: object) -> Dict[str, object]:
+    if hasattr(response, "model_dump"):
+        return response.model_dump()
+    if hasattr(response, "to_dict"):
+        return response.to_dict()
+    if hasattr(response, "json"):
+        try:
+            return json.loads(response.json())
+        except Exception:
+            pass
+    return json.loads(json.dumps(response))
+
+
+def _build_openai_client(api_key: str, base_url: str, timeout_sec: float):
+    try:
+        import openai
+    except ImportError as exc:
+        raise RuntimeError("openai_not_installed") from exc
+    env_value = os.getenv("OPENAI_API_KEY", "")
+    if env_value and not os.path.isfile(env_value):
+        openai.api_key_path = None
+    return openai.OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_sec)
+
+
+def _post_or_openai(
+    base_url: str,
+    url: str,
+    payload: Dict[str, object],
+    api_key: str,
+    timeout_sec: float,
+) -> Dict[str, object]:
+    try:
+        client = _build_openai_client(api_key, base_url, timeout_sec)
+    except RuntimeError:
+        return _post_json(url, payload, api_key, timeout_sec)
+    response = client.chat.completions.create(**payload)
+    return _openai_response_to_dict(response)
 
 
 def load_schema_safe() -> Dict[str, object]:
