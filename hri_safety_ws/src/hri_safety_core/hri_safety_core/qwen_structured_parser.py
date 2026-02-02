@@ -22,7 +22,7 @@ from hri_safety_core.scene_utils import build_scene_payload
 DEFAULT_STRUCTURED_MODEL = "qwen3-max"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
-DEFAULT_TIMEOUT_SEC = 12.0
+DEFAULT_TIMEOUT_SEC = 30.0
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_TEMPERATURE = 1e-9
 DEFAULT_MAX_TOKENS = 640
@@ -36,6 +36,7 @@ SYSTEM_PROMPT = (
     "output a JSON object only. No markdown or extra text. "
     "Return 1-5 candidates with confidence (0-1). "
     "Always fill hazards, contradictions, missing_slots, and clarifying_questions. "
+    "Each candidate MUST include skill.name and skill.args (use null when unknown). "
     "Do not fabricate object_id; object_id must come from scene.objects. "
     "If object_id is not in scene.objects, include a contradiction and lower confidence. "
     "Do not infer age or demographics unless explicitly stated by the user; "
@@ -148,6 +149,97 @@ def _soft_fill_parse_result(parsed: Dict[str, object]) -> Dict[str, object]:
         meta_payload["debug"] = {}
     parsed["meta"] = meta_payload
 
+    candidates = parsed.get("candidates")
+    if isinstance(candidates, dict):
+        candidates = [candidates]
+    if not isinstance(candidates, list):
+        candidates = []
+
+    fixed_candidates = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent")
+        if not isinstance(intent, str):
+            item["intent"] = "ask_user"
+        slots = item.get("slots")
+        if not isinstance(slots, dict):
+            item["slots"] = {}
+        skill = item.get("skill")
+        if not isinstance(skill, dict):
+            skill = {"name": None, "args": None}
+        if "name" not in skill:
+            skill["name"] = None
+        if "args" not in skill:
+            skill["args"] = None
+        item["skill"] = skill
+        confidence = item.get("confidence")
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+            confidence = 0.2
+        item["confidence"] = max(0.0, min(float(confidence), 1.0))
+        why = item.get("why")
+        if not isinstance(why, list):
+            why = ["auto_filled"]
+        item["why"] = [str(reason)[:120] for reason in why if str(reason)]
+        risk_hints = item.get("risk_hints")
+        if not isinstance(risk_hints, list):
+            risk_hints = []
+        item["risk_hints"] = [str(hint) for hint in risk_hints if str(hint)]
+        fixed_candidates.append(item)
+
+    if not fixed_candidates:
+        fixed_candidates = [
+            {
+                "intent": "ask_user",
+                "slots": {},
+                "skill": {"name": None, "args": None},
+                "confidence": 0.2,
+                "why": ["auto_filled"],
+                "risk_hints": [],
+            }
+        ]
+
+    if len(fixed_candidates) > 5:
+        fixed_candidates = fixed_candidates[:5]
+    parsed["candidates"] = fixed_candidates
+
+    missing_slots = parsed.get("missing_slots")
+    if not isinstance(missing_slots, list):
+        parsed["missing_slots"] = []
+
+    contradictions = parsed.get("contradictions")
+    if not isinstance(contradictions, list):
+        parsed["contradictions"] = []
+
+    hazards = parsed.get("hazards")
+    if not isinstance(hazards, list):
+        hazards = []
+    fixed_hazards = []
+    for hazard in hazards:
+        if not isinstance(hazard, dict):
+            continue
+        tag = hazard.get("tag")
+        severity = hazard.get("severity")
+        evidence = hazard.get("evidence")
+        if not isinstance(tag, str):
+            tag = "unspecified"
+        if not isinstance(severity, (int, float)) or isinstance(severity, bool):
+            severity = 0.0
+        if not isinstance(evidence, list):
+            evidence = []
+        fixed_hazards.append(
+            {
+                "tag": tag,
+                "severity": max(0.0, min(float(severity), 1.0)),
+                "evidence": [str(item) for item in evidence if str(item)],
+            }
+        )
+    parsed["hazards"] = fixed_hazards
+
+    questions = parsed.get("clarifying_questions")
+    if not isinstance(questions, list):
+        parsed["clarifying_questions"] = []
+
     return parsed
 
 
@@ -254,6 +346,21 @@ class QwenStructuredClient:
         env_path = _find_env_file(Path(__file__).resolve())
         if env_path:
             _load_env_file(env_path)
+        self._apply_env_overrides()
+
+    def _apply_env_overrides(self) -> None:
+        timeout_env = os.getenv("QWEN_TIMEOUT_SEC") or os.getenv("LLM_TIMEOUT_SEC")
+        if timeout_env:
+            try:
+                self.timeout_sec = float(timeout_env)
+            except ValueError:
+                pass
+        retries_env = os.getenv("QWEN_MAX_RETRIES") or os.getenv("LLM_MAX_RETRIES")
+        if retries_env:
+            try:
+                self.max_retries = max(0, int(float(retries_env)))
+            except ValueError:
+                pass
 
     def parse(
         self,
@@ -360,6 +467,14 @@ class QwenStructuredClient:
         last_error: Optional[Exception] = None
         repair_left = self.repair_attempts
         network_tries = 0
+        retry_errors = (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError, TimeoutError)
+        try:
+            import openai  # type: ignore
+
+            retry_errors = retry_errors + (openai.OpenAIError,)
+        except Exception:
+            pass
+
         while True:
             try:
                 payload = {
@@ -381,7 +496,7 @@ class QwenStructuredClient:
                 repair_left -= 1
                 messages = _build_repair_messages(parsed, errors)
                 continue
-            except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError) as exc:
+            except retry_errors as exc:
                 last_error = exc
                 if network_tries >= self.max_retries:
                     break

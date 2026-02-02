@@ -8,7 +8,7 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description() -> LaunchDescription:
     pkg_share = get_package_share_directory("hri_safety_core")
-    default_world = os.path.join(pkg_share, "worlds", "tabletop.sdf")
+    default_world = os.path.join(pkg_share, "worlds", "tabletop_level1.sdf")
 
     return LaunchDescription(
         [

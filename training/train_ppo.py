@@ -7,7 +7,7 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.utils import set_random_seed
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from symbolic_env import (
     ACTION_CONFIRM,
@@ -17,6 +17,7 @@ from symbolic_env import (
     DIALOGUE_CONFIG,
     FeatureNoiseWrapper,
     REWARD_CONFIG,
+    SymbolicBeliefV1Env,
     SymbolicDialogueEnv,
     SymbolicSafetyEnv,
 )
@@ -48,18 +49,19 @@ OBS_FIELDS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default="safety", choices=["safety", "dialogue"])
-    parser.add_argument("--total-timesteps", type=int, default=50000)
+    parser.add_argument("--total-timesteps", type=int, default=1_000_000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-steps", type=int, default=3)
     parser.add_argument("--log-dir", type=str, default="runs")
     parser.add_argument("--save-path", type=str, default=str(DEFAULT_POLICY_PATH))
-    parser.add_argument("--eval-episodes", type=int, default=50)
-    parser.add_argument("--eval-freq", type=int, default=1000)
+    parser.add_argument("--eval-episodes", type=int, default=200)
+    parser.add_argument("--eval-freq", type=int, default=20000)
     parser.add_argument("--noise-scale", type=float, default=0.0)
     parser.add_argument("--noise-amb", type=float, default=0.0)
     parser.add_argument("--noise-risk", type=float, default=0.0)
     parser.add_argument("--noise-conflict", type=float, default=0.0)
     parser.add_argument("--obs-mode", type=str, default="legacy")
+    parser.add_argument("--n-envs", type=int, default=8)
     return parser.parse_args()
 
 
@@ -117,7 +119,7 @@ def _evaluate_with_stats(model, env, n_eval_episodes: int) -> dict:
 
             if done_flag:
                 violations += int(info0.get("violation", 0)) if isinstance(info0, dict) else 0
-                done = True
+            done = done_flag
 
         episode_rewards.append(ep_reward)
         episode_lengths.append(ep_len)
@@ -154,23 +156,37 @@ def main() -> None:
         noise_risk = args.noise_scale
         noise_conflict = min(0.3, args.noise_scale)
 
-    def make_env():
-        if args.env == "dialogue":
-            return SymbolicDialogueEnv(max_steps=args.max_steps, seed=args.seed)
+    def make_env_fn(rank: int):
+        def _init():
+            seed = args.seed + rank
+            if args.obs_mode == "belief_v1":
+                return SymbolicBeliefV1Env(max_steps=args.max_steps, seed=seed)
+            if args.env == "dialogue":
+                return SymbolicDialogueEnv(max_steps=args.max_steps, seed=seed)
 
-        base_env = SymbolicSafetyEnv(max_steps=args.max_steps, seed=args.seed)
-        if noise_amb > 0.0 or noise_risk > 0.0 or noise_conflict > 0.0:
-            return FeatureNoiseWrapper(
-                base_env,
-                noise_amb=noise_amb,
-                noise_risk=noise_risk,
-                noise_conflict=noise_conflict,
-                seed=args.seed,
-            )
-        return base_env
+            base_env = SymbolicSafetyEnv(max_steps=args.max_steps, seed=seed)
+            if noise_amb > 0.0 or noise_risk > 0.0 or noise_conflict > 0.0:
+                return FeatureNoiseWrapper(
+                    base_env,
+                    noise_amb=noise_amb,
+                    noise_risk=noise_risk,
+                    noise_conflict=noise_conflict,
+                    seed=seed,
+                )
+            return base_env
 
-    env = DummyVecEnv([make_env])
-    eval_env = DummyVecEnv([make_env])
+        return _init
+
+    n_envs = max(1, int(args.n_envs))
+    if n_envs > 1:
+        try:
+            env = SubprocVecEnv([make_env_fn(i) for i in range(n_envs)])
+        except Exception:
+            env = DummyVecEnv([make_env_fn(i) for i in range(n_envs)])
+    else:
+        env = DummyVecEnv([make_env_fn(0)])
+
+    eval_env = DummyVecEnv([make_env_fn(10_000)])
 
     model = PPO(
         "MlpPolicy",
@@ -203,9 +219,10 @@ def main() -> None:
         best_policy_path.write_bytes(best_model_path.read_bytes())
 
     config_path = save_path.with_suffix(".config.json")
+    env_name = "belief_v1" if args.obs_mode == "belief_v1" else args.env
     config = {
         "timestamp": timestamp,
-        "env_name": args.env,
+        "env_name": env_name,
         "seed": args.seed,
         "total_timesteps": args.total_timesteps,
         "eval_episodes": args.eval_episodes,
@@ -213,7 +230,7 @@ def main() -> None:
         "obs_mode": args.obs_mode,
         "obs_fields": OBS_FIELDS.get(args.obs_mode, []),
         "reward_config": REWARD_CONFIG,
-        "env": {"max_steps": args.max_steps},
+        "env": {"max_steps": args.max_steps, "n_envs": n_envs},
         "noise": {
             "noise_scale": args.noise_scale,
             "noise_amb": noise_amb,
@@ -234,15 +251,15 @@ def main() -> None:
         "training_steps": args.total_timesteps,
         "seed": args.seed,
         "reward_config": REWARD_CONFIG,
-        "env_name": args.env,
-        "env": {"max_steps": args.max_steps},
+        "env_name": env_name,
+        "env": {"max_steps": args.max_steps, "n_envs": n_envs},
         "timestamp": timestamp,
     }
     if args.env == "dialogue":
         meta["env_config"] = DIALOGUE_CONFIG
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    stats = _evaluate_with_stats(model, env, n_eval_episodes=args.eval_episodes)
+    stats = _evaluate_with_stats(model, eval_env, n_eval_episodes=args.eval_episodes)
     print(
         "Eval reward: {mean:.2f} +/- {std:.2f} | mean_ep_length={length:.2f} "
         "| query_rate={qr:.2f} | violation_rate={vr:.2f} "

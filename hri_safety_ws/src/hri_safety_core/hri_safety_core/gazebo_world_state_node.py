@@ -15,7 +15,17 @@ DEFAULT_PUBLISH_HZ = 2.0
 DEFAULT_COMMAND_TIMEOUT = 2.0
 DEFAULT_SUMMARY_CONTEXT = "context=[child_present=false], task_state=idle"
 DEFAULT_MAX_SUMMARY_CHARS = 1000
-DEFAULT_OBJECT_NAMES = ["cup_red_1", "cup_red_2", "knife_1"]
+DEFAULT_OBJECT_NAMES = [
+    "cup_red_1",
+    "cup_red_2",
+    "knife_1",
+    "cup_blue_1",
+    "cup_green_1",
+    "bowl_1",
+    "plate_1",
+    "spoon_1",
+    "scissors_1",
+]
 
 FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
@@ -128,6 +138,14 @@ def _extract_pose_xyz(obj: Dict[str, object]) -> Optional[Dict[str, float]]:
         return None
 
 
+def _axis_tag(value: float, negative: str, positive: str, threshold: float = 0.05) -> str:
+    if value > threshold:
+        return positive
+    if value < -threshold:
+        return negative
+    return "center"
+
+
 def build_scene_summary(
     objects_by_name: Dict[str, Dict[str, object]],
     object_names: Sequence[str],
@@ -146,9 +164,17 @@ def build_scene_summary(
         if not pose:
             parts.append(f"{name}(missing)")
             continue
-        parts.append(
-            f"{name}(x={pose['x']:.2f},y={pose['y']:.2f},z={pose['z']:.2f})"
-        )
+        y_tag = _axis_tag(pose["y"], negative="right", positive="left")
+        x_tag = _axis_tag(pose["x"], negative="back", positive="front")
+        tags = [y_tag, x_tag]
+        lower_name = name.lower()
+        if any(keyword in lower_name for keyword in ["knife", "scissors", "blade", "sharp"]):
+            tags.append("risky")
+        unique_tags = []
+        for tag in tags:
+            if tag not in unique_tags:
+                unique_tags.append(tag)
+        parts.append(f"{name}({','.join(unique_tags)})")
     summary = f"objects=[{', '.join(parts)}], {context}"
     if len(summary) > max_chars:
         truncated = summary[: max_chars - 3].rstrip()

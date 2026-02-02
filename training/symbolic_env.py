@@ -209,6 +209,256 @@ class FeatureNoiseWrapper(gym.Wrapper):
         return obs
 
 
+class SymbolicBeliefV1Env(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self, max_steps: int = 5, seed: int = 0, config: dict | None = None):
+        super().__init__()
+        self.max_steps = max(1, int(max_steps))
+        self.rng = np.random.default_rng(seed)
+        self.config = dict(DIALOGUE_CONFIG)
+        if isinstance(config, dict):
+            self.config.update(config)
+
+        self.action_space = spaces.Discrete(6)
+        self.observation_space = spaces.Box(
+            low=np.array(
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0],
+                dtype=np.float32,
+            ),
+            high=np.array(
+                [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    float(self.max_steps),
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                ],
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
+        )
+
+        self.amb = 0.0
+        self.risk = 0.0
+        self.conflict = 0.0
+        self.p_top = 0.0
+        self.margin = 0.0
+        self.entropy = 0.0
+        self.missing_slots = 0
+        self.query_count = 0
+        self.last_outcome = 0.0
+        self.p_minor = 0.0
+        self.p_adult = 0.0
+        self.p_older = 0.0
+        self.age_conf = 0.0
+        self.guardian_code = -1.0
+        self.hazard_top = 0.0
+        self.step_count = 0
+
+        self.hazard_present = False
+        self.guardian_present = False
+        self.true_user_group = 1
+
+    def reset(self, *, seed: int | None = None, options=None):
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+
+        self.step_count = 0
+        self.query_count = 0
+        self.last_outcome = 0.0
+
+        self.amb = float(self.rng.uniform(0.0, 1.0))
+        self.conflict = float(self.rng.random() < self.config["conflict_prob"])
+
+        self.hazard_present = bool(self.rng.random() < self.config["hazard_prob"])
+        if self.hazard_present:
+            self.hazard_top = float(self.rng.uniform(0.6, 1.0))
+        else:
+            self.hazard_top = float(self.rng.uniform(0.0, 0.4))
+
+        self.true_user_group = self._sample_user_group()
+        self.guardian_present = self._sample_guardian_present()
+
+        self.age_conf = float(self.rng.uniform(self.config["age_conf_min"], self.config["age_conf_max"]))
+        self.p_minor, self.p_adult, self.p_older = self._sample_age_probs(
+            self.true_user_group, self.age_conf
+        )
+        if self.rng.random() < self.config["guardian_known_prob"] * self.age_conf:
+            self.guardian_code = 1.0 if self.guardian_present else 0.0
+        else:
+            self.guardian_code = -1.0
+
+        self._sample_candidate_distribution()
+        self.missing_slots = self._sample_missing_slots()
+        self.risk = self._compute_risk()
+
+        return self._get_obs(), {}
+
+    def _sample_user_group(self) -> int:
+        minor_prob = self.config["minor_prob"]
+        older_prob = self.config["older_prob"]
+        adult_prob = max(0.0, 1.0 - minor_prob - older_prob)
+        r = self.rng.random()
+        if r < minor_prob:
+            return 0
+        if r < minor_prob + adult_prob:
+            return 1
+        return 2
+
+    def _sample_guardian_present(self) -> bool:
+        if self.true_user_group == 0:
+            return bool(self.rng.random() < self.config["guardian_prob_minor"])
+        return bool(self.rng.random() < self.config["guardian_prob_other"])
+
+    def _sample_age_probs(self, true_group: int, age_conf: float) -> tuple[float, float, float]:
+        misclass_prob = self.config["misclass_base"] * (1.0 - age_conf)
+        probs = np.array([0.05, 0.05, 0.05], dtype=np.float32)
+        probs[true_group] = 0.85
+        if self.rng.random() < misclass_prob:
+            wrong = (true_group + int(self.rng.integers(1, 3))) % 3
+            probs = np.array([0.05, 0.05, 0.05], dtype=np.float32)
+            probs[wrong] = 0.85
+        noise = self.rng.normal(0.0, self.config["age_noise"] * (1.0 - age_conf), size=3)
+        probs = np.clip(probs + noise, 0.01, 0.98)
+        total = float(np.sum(probs))
+        probs = probs / total if total > 0 else np.array([1 / 3, 1 / 3, 1 / 3], dtype=np.float32)
+        return float(probs[0]), float(probs[1]), float(probs[2])
+
+    def _sample_candidate_distribution(self) -> None:
+        n = 3
+        base = self.rng.random(n) + 1e-3
+        exponent = 1.0 + (1.0 - self.amb) * 4.0
+        scaled = base**exponent
+        probs = scaled / float(np.sum(scaled))
+        probs = np.clip(probs, 1e-4, 1.0)
+        probs = probs / float(np.sum(probs))
+
+        self.p_top = float(np.max(probs))
+        sorted_probs = np.sort(probs)[::-1]
+        self.margin = float(sorted_probs[0] - (sorted_probs[1] if len(sorted_probs) > 1 else 0.0))
+        entropy = -float(np.sum(probs * np.log(probs)))
+        self.entropy = float(entropy / max(1e-6, np.log(float(n))))
+
+    def _sample_missing_slots(self) -> int:
+        if self.amb > 0.7:
+            count = int(self.rng.integers(2, 4))
+        elif self.amb > 0.4:
+            count = int(self.rng.integers(1, 3))
+        else:
+            count = int(self.rng.integers(0, 2))
+        return min(3, max(0, count))
+
+    def _compute_risk(self) -> float:
+        intent_risk = float(self.rng.uniform(0.0, 0.2))
+        conflict_extra = 0.3 if self.conflict >= 1.0 else 0.0
+        minor_high = self.p_minor >= 0.7 and self.age_conf >= 0.6
+        age_extra = 0.2 if minor_high and self.hazard_top >= 0.3 else 0.0
+        risk = intent_risk + 0.6 * self.hazard_top + age_extra + conflict_extra
+        return float(np.clip(risk, 0.0, 1.0))
+
+    def _get_obs(self) -> np.ndarray:
+        missing_norm = float(self.missing_slots) / 3.0
+        return np.array(
+            [
+                self.amb,
+                self.risk,
+                self.conflict,
+                self.p_top,
+                self.margin,
+                self.entropy,
+                missing_norm,
+                float(self.query_count),
+                self.last_outcome,
+                self.p_minor,
+                self.age_conf,
+                self.guardian_code,
+                self.hazard_top,
+            ],
+            dtype=np.float32,
+        )
+
+    def step(self, action: int):
+        reward = 0.0
+        cost = 0.0
+        terminated = False
+        truncated = False
+
+        if action in QUERY_ACTIONS:
+            reward += self.config["query_base_penalty"] + self.config["query_growth_penalty"] * self.query_count
+            self.query_count += 1
+            self.amb = max(0.05, self.amb * 0.4)
+            self.missing_slots = max(0, self.missing_slots - 1)
+            self._sample_candidate_distribution()
+            self.risk = max(0.0, self.risk - 0.05)
+            self.last_outcome = 0.0
+
+        elif action == ACTION_EXECUTE:
+            if self.conflict >= 1.0:
+                reward = REWARD_CONFIG["execute_conflict"]
+                cost = 1.0
+            elif self.risk >= REWARD_CONFIG["risk_threshold"]:
+                reward = REWARD_CONFIG["execute_risky"]
+                cost = 1.0
+            elif self.amb >= 0.6 or self.missing_slots >= 2:
+                reward = DIALOGUE_CONFIG["execute_ambiguous"]
+            else:
+                reward = REWARD_CONFIG["execute_success"]
+                self.last_outcome = 1.0
+            terminated = True
+
+        elif action == ACTION_REFUSE:
+            if self.conflict >= 1.0 or self.risk >= REWARD_CONFIG["risk_threshold"]:
+                reward = REWARD_CONFIG["refuse_safe"]
+                self.last_outcome = 1.0
+            else:
+                reward = REWARD_CONFIG["refuse_unnecessary"]
+            terminated = True
+
+        elif action == ACTION_FALLBACK:
+            good = (
+                self.query_count >= max(1, self.max_steps - 1)
+                or self.amb >= 0.6
+                or self.risk >= REWARD_CONFIG["risk_threshold"]
+                or self.conflict >= 1.0
+            )
+            reward = REWARD_CONFIG["fallback_good"] if good else REWARD_CONFIG["fallback_bad"]
+            terminated = True
+
+        self.step_count += 1
+        if not terminated and self.step_count >= self.max_steps:
+            reward += REWARD_CONFIG["timeout_penalty"]
+            truncated = True
+
+        info = {"cost": cost}
+        if terminated or truncated:
+            violation = 1.0 if cost > 0 else 0.0
+            refused = 1.0 if action == ACTION_REFUSE else 0.0
+            fallback = 1.0 if action == ACTION_FALLBACK else 0.0
+            success = 1.0 if (action == ACTION_EXECUTE and violation == 0.0) else 0.0
+            if action == ACTION_REFUSE and (self.conflict >= 1.0 or self.risk >= REWARD_CONFIG["risk_threshold"]):
+                success = 1.0
+            info.update(
+                {
+                    "success": success,
+                    "violation": violation,
+                    "refused": refused,
+                    "fallback": fallback,
+                    "queries": float(self.query_count),
+                }
+            )
+
+        return self._get_obs(), reward, terminated, truncated, info
+
+
 class SymbolicDialogueEnv(gym.Env):
     metadata = {"render_modes": []}
 

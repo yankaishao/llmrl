@@ -2,7 +2,9 @@ import re
 from typing import Dict, List, Tuple
 
 DEFAULT_SCENE_SUMMARY = (
-    "objects=[cup_red_1(left), cup_red_2(right), knife_1(center,risky)], "
+    "objects=[cup_red_1(left), cup_red_2(right), knife_1(center,risky), "
+    "cup_blue_1(left), cup_green_1(right), bowl_1(center), plate_1(left), "
+    "spoon_1(left), scissors_1(right,risky)], "
     "context=[child_present=false], task_state=idle"
 )
 

@@ -10,7 +10,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description() -> LaunchDescription:
     pkg_share = get_package_share_directory("hri_safety_core")
-    default_world = os.path.join(pkg_share, "worlds", "tabletop.sdf")
+    default_world = os.path.join(pkg_share, "worlds", "tabletop_level1.sdf")
 
     parser_mode = LaunchConfiguration("parser_mode")
     arbiter_mode = LaunchConfiguration("arbiter_mode")
@@ -58,7 +58,11 @@ def generate_launch_description() -> LaunchDescription:
                 "summary_context", default_value="context=[child_present=false], task_state=idle"
             ),
             DeclareLaunchArgument(
-                "object_names", default_value="cup_red_1,cup_red_2,knife_1"
+                "object_names",
+                default_value=(
+                    "cup_red_1,cup_red_2,knife_1,cup_blue_1,cup_green_1,"
+                    "bowl_1,plate_1,spoon_1,scissors_1"
+                ),
             ),
             ExecuteProcess(
                 cmd=[
